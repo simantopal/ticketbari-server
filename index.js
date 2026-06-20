@@ -73,22 +73,25 @@ async function run() {
 
     // Update Ticket
     app.put("/api/tickets/:id", async (req, res) => {
-      const id = req.params.id;
-      const updatedTicket = req.body;
+      try {
+        const id = req.params.id;
+        const updatedData = req.body;
 
-      const result = await ticketCollection.updateOne(
-        {
-          _id: new ObjectId(id),
-        },
-        {
-          $set: {
-            ...updatedTicket,
-            updatedAt: new Date(),
-          },
-        }
-      );
+        const result = await ticketCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              ...updatedData,
+              status: "pending", // vendor edit করলে আবার review
+              updatedAt: new Date(),
+            },
+          }
+        );
 
-      res.send(result);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
 
     // Delete Ticket
