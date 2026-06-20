@@ -31,6 +31,36 @@ async function run() {
 
     const database = client.db("ticket-bari");
     const ticketCollection = database.collection("tickets");
+    const userCollection = database.collection("user");
+
+
+    // GET user
+    app.get("/api/users/:id", async (req, res) => {
+      try {
+        const user = await userCollection.findOne({
+          _id: new ObjectId(req.params.id),
+        });
+        res.send(user);
+      } catch (e) {
+        res.status(500).send({ message: e.message });
+      }
+    });
+
+    // UPDATE user
+    app.put("/api/users/:id", async (req, res) => {
+      try {
+        const { name, image } = req.body;
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { name, image, updatedAt: new Date() } }
+        );
+
+        res.send(result);
+      } catch (e) {
+        res.status(500).send({ message: e.message });
+      }
+    });
 
 
     app.get('/api/tickets', async (req, res) => {
@@ -45,6 +75,35 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     })
+
+
+    app.get("/api/advertisements", async (req, res) => {
+      const tickets = await ticketCollection
+        .find({
+          // status: "approved",
+          // isAdvertised: true,
+        })
+        .limit(6)
+        .toArray();
+
+      res.send(tickets);
+    });
+
+    app.get("/api/latest-tickets", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ 
+            // status: "approved" 
+          })
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .toArray();
+
+        res.send(tickets);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
 
 
     // Get Single Ticket
@@ -71,26 +130,24 @@ async function run() {
       res.send(result);
     });
 
-    // Update Ticket
     app.put("/api/tickets/:id", async (req, res) => {
       try {
-        const id = req.params.id;
-        const updatedData = req.body;
+        const { id } = req.params;
 
         const result = await ticketCollection.updateOne(
           { _id: new ObjectId(id) },
           {
             $set: {
-              ...updatedData,
-              status: "pending", // vendor edit করলে আবার review
+              ...req.body,
+              status: "pending",
               updatedAt: new Date(),
             },
           }
         );
 
         res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: error.message });
+      } catch (e) {
+        res.status(500).send({ message: e.message });
       }
     });
 
