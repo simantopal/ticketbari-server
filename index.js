@@ -164,33 +164,44 @@ async function run() {
     });
 
 
-    // booking related api
+    // CREATE BOOKING
     app.post("/api/bookings", async (req, res) => {
-      const bookingData = req.body;
+      const { unitPrice, quantity, ticketTitle, ticketId, userEmail } = req.body;
 
-      const result = await bookingCollection.insertOne({
-        ...bookingData,
+      const price = Number(unitPrice);
+      const qty = Number(quantity);
+
+      const booking = {
+        ticketId,
+        ticketTitle: ticketTitle || "Unknown Ticket",
+        userEmail,
+        quantity: qty,
+        unitPrice: price,
+        totalPrice: price * qty,
+        status: "pending",
         createdAt: new Date(),
-      });
+      };
+
+      const result = await bookingCollection.insertOne(booking);
 
       res.send({
         success: true,
         insertedId: result.insertedId,
+        booking,
       });
     });
 
+    // GET BOOKINGS
     app.get("/api/bookings", async (req, res) => {
       const result = await bookingCollection.find().toArray();
+      // console.log("BOOKINGS FROM DB:", result);
       res.send(result);
     });
 
+    // UPDATE STATUS (ACCEPT / REJECT)
     app.patch("/api/bookings/:id", async (req, res) => {
       const id = req.params.id;
-      const { status } = req.body; // "accepted" or "rejected"
-
-      if (!["accepted", "rejected"].includes(status)) {
-        return res.status(400).send({ success: false, message: "Invalid status" });
-      }
+      const { status } = req.body;
 
       const result = await bookingCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -202,7 +213,6 @@ async function run() {
         updated: result.modifiedCount,
       });
     });
-
 
 
 
