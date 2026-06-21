@@ -32,6 +32,7 @@ async function run() {
     const database = client.db("ticket-bari");
     const ticketCollection = database.collection("tickets");
     const userCollection = database.collection("user");
+    const bookingCollection = database.collection("bookings");
 
 
     // GET user
@@ -92,7 +93,7 @@ async function run() {
     app.get("/api/latest-tickets", async (req, res) => {
       try {
         const tickets = await ticketCollection
-          .find({ 
+          .find({
             // status: "approved" 
           })
           .sort({ createdAt: -1 })
@@ -160,6 +161,46 @@ async function run() {
       });
 
       res.send(result);
+    });
+
+
+    // booking related api
+    app.post("/api/bookings", async (req, res) => {
+      const bookingData = req.body;
+
+      const result = await bookingCollection.insertOne({
+        ...bookingData,
+        createdAt: new Date(),
+      });
+
+      res.send({
+        success: true,
+        insertedId: result.insertedId,
+      });
+    });
+
+    app.get("/api/bookings", async (req, res) => {
+      const result = await bookingCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.patch("/api/bookings/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body; // "accepted" or "rejected"
+
+      if (!["accepted", "rejected"].includes(status)) {
+        return res.status(400).send({ success: false, message: "Invalid status" });
+      }
+
+      const result = await bookingCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+
+      res.send({
+        success: true,
+        updated: result.modifiedCount,
+      });
     });
 
 
