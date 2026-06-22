@@ -36,6 +36,11 @@ async function run() {
 
 
     // GET user
+    app.get("/api/users", async (req, res) => {
+      const users = await userCollection.find({}).toArray();
+      res.send(users);
+    });
+
     app.get("/api/users/:id", async (req, res) => {
       try {
         const user = await userCollection.findOne({
@@ -63,38 +68,137 @@ async function run() {
       }
     });
 
+    app.patch("/api/users/:id", async (req, res) => {
+      const { id } = req.params;
+      const { role, isFraud } = req.body;
+
+      const updateDoc = {};
+
+      // যদি role পাঠায়
+      if (role) {
+        updateDoc.role = role;
+      }
+
+      // যদি fraud mark করে
+      if (typeof isFraud === "boolean") {
+        updateDoc.isFraud = isFraud;
+      }
+
+      const result = await userCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateDoc }
+      );
+
+      // ❗ Fraud হলে tickets hide হবে
+      if (isFraud === true) {
+        await ticketCollection.updateMany(
+          { vendorId: id },
+          { $set: { hidden: true } }
+        );
+      }
+
+      res.send(result);
+    });
+
 
     app.get('/api/tickets', async (req, res) => {
-      const query = {};
-      if (req.query.vendorEmail) {
-        query.vendorEmail = req.query.vendorEmail;
+      try {
+        const query = {};
+
+        if (req.query.vendorEmail) {
+          query.vendorEmail = req.query.vendorEmail;
+        }
+
+        if (req.query.status) {
+          query.status = req.query.status;
+        }
+
+        // ✅ important safety filters
+        query.hidden = { $ne: true };
+
+        const result = await ticketCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
       }
-      if (req.query.status) {
-        query.status = req.query.status;
-      }
-      const cursor = ticketCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    })
+    });
 
 
     app.get("/api/advertisements", async (req, res) => {
-      const tickets = await ticketCollection
-        .find({
-          // status: "approved",
-          // isAdvertised: true,
-        })
-        .limit(6)
-        .toArray();
+      try {
+        const result = await ticketCollection
+          .find({
+            status: "approved",
+            isAdvertised: true,
+            hidden: { $ne: true },
+          })
+          .sort({ updatedAt: -1 })
+          .limit(6)
+          .toArray();
 
-      res.send(tickets);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to get advertisements" });
+      }
     });
+
+    app.patch("/api/tickets/:id/advertise", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { isAdvertised } = req.body;
+
+        const ticket = await ticketCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!ticket) {
+          return res.status(404).send({ message: "Ticket not found" });
+        }
+
+        // ❌ only approved ticket advertise করা যাবে
+        if (ticket.status !== "approved") {
+          return res.status(400).send({
+            message: "Only approved tickets can be advertised",
+          });
+        }
+
+        // ❌ max 6 active ads
+        if (isAdvertised) {
+          const count = await ticketCollection.countDocuments({
+            status: "approved",
+            isAdvertised: true,
+          });
+
+          if (count >= 6) {
+            return res.status(400).send({
+              message: "Maximum 6 tickets can be advertised",
+            });
+          }
+        }
+
+        const result = await ticketCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              isAdvertised,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+
 
     app.get("/api/latest-tickets", async (req, res) => {
       try {
         const tickets = await ticketCollection
           .find({
-            // status: "approved" 
+            status: "approved"
           })
           .sort({ createdAt: -1 })
           .limit(8)
