@@ -152,6 +152,20 @@ async function run() {
       }
     });
 
+    app.patch("/api/tickets/:id/status", async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      const result = await ticketCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { status },
+        }
+      );
+
+      res.send(result);
+    });
+
     // Delete Ticket
     app.delete("/api/tickets/:id", async (req, res) => {
       const id = req.params.id;
@@ -166,29 +180,33 @@ async function run() {
 
     // CREATE BOOKING
     app.post("/api/bookings", async (req, res) => {
-      const { unitPrice, quantity, ticketTitle, ticketId, userEmail } = req.body;
+      try {
+        const { unitPrice, quantity, ticketTitle, ticketId, userEmail } = req.body;
 
-      const price = Number(unitPrice);
-      const qty = Number(quantity);
+        const price = Number(unitPrice);
+        const qty = Number(quantity);
 
-      const booking = {
-        ticketId,
-        ticketTitle: ticketTitle || "Unknown Ticket",
-        userEmail,
-        quantity: qty,
-        unitPrice: price,
-        totalPrice: price * qty,
-        status: "pending",
-        createdAt: new Date(),
-      };
+        const booking = {
+          ticketId,
+          ticketTitle,
+          userEmail,
+          quantity: qty,
+          unitPrice: price,
+          totalPrice: price * qty,
+          status: "pending",
+          createdAt: new Date(),
+        };
 
-      const result = await bookingCollection.insertOne(booking);
+        const result = await bookingCollection.insertOne(booking);
 
-      res.send({
-        success: true,
-        insertedId: result.insertedId,
-        booking,
-      });
+        res.send({
+          success: true,
+          insertedId: result.insertedId,
+          booking,
+        });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
 
     // GET BOOKINGS
@@ -200,18 +218,43 @@ async function run() {
 
     // UPDATE STATUS (ACCEPT / REJECT)
     app.patch("/api/bookings/:id", async (req, res) => {
-      const id = req.params.id;
-      const { status } = req.body;
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
 
-      const result = await bookingCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
+        const booking = await bookingCollection.findOne({
+          _id: new ObjectId(id),
+        });
 
-      res.send({
-        success: true,
-        updated: result.modifiedCount,
-      });
+        if (!booking) {
+          return res.status(404).send({ message: "Booking not found" });
+        }
+
+        // update booking status
+        await bookingCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        // ONLY reduce quantity when approved
+        if (status === "approved") {
+          await ticketCollection.updateOne(
+            { _id: new ObjectId(booking.ticketId) },
+            {
+              $inc: {
+                quantity: -Number(booking.quantity),
+              },
+            }
+          );
+        }
+
+        res.send({
+          success: true,
+          message: `Booking ${status}`,
+        });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
 
 
