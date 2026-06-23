@@ -35,6 +35,30 @@ async function run() {
     const bookingCollection = database.collection("bookings");
 
 
+
+    app.post("/api/tickets", async (req, res) => {
+      const ticket = req.body;
+
+      const vendor = await userCollection.findOne({
+        email: ticket.vendorEmail,
+      });
+
+      if (vendor?.isFraud) {
+        return res.status(403).send({
+          message: "Fraud vendors cannot add tickets",
+        });
+      }
+
+      const result = await ticketCollection.insertOne({
+        ...ticket,
+        status: "pending",
+        hidden: false,
+        createdAt: new Date(),
+      });
+
+      res.send(result);
+    });
+
     // GET user
     app.get("/api/users", async (req, res) => {
       const users = await userCollection.find({}).toArray();
@@ -74,26 +98,32 @@ async function run() {
 
       const updateDoc = {};
 
-      // যদি role পাঠায়
       if (role) {
         updateDoc.role = role;
       }
 
-      // যদি fraud mark করে
       if (typeof isFraud === "boolean") {
         updateDoc.isFraud = isFraud;
       }
+
+      const user = await userCollection.findOne({
+        _id: new ObjectId(id),
+      });
 
       const result = await userCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: updateDoc }
       );
 
-      // ❗ Fraud হলে tickets hide হবে
       if (isFraud === true) {
         await ticketCollection.updateMany(
-          { vendorId: id },
-          { $set: { hidden: true } }
+          { vendorEmail: user.email },
+          {
+            $set: {
+              hidden: true,
+              isFraudVendor: true,
+            },
+          }
         );
       }
 
@@ -198,7 +228,8 @@ async function run() {
       try {
         const tickets = await ticketCollection
           .find({
-            status: "approved"
+            status: "approved",
+            hidden: { $ne: true },
           })
           .sort({ createdAt: -1 })
           .limit(8)
@@ -282,80 +313,51 @@ async function run() {
     });
 
 
-    // CREATE BOOKING
     app.post("/api/bookings", async (req, res) => {
+      const booking = {
+        ...req.body,
+        status: "pending",
+        createdAt: new Date(),
+      };
+
+      const result = await bookingCollection.insertOne(booking);
+
+      res.send({
+        ...booking,
+        _id: result.insertedId,
+      });
+    });
+
+    app.get("/api/bookings", async (req, res) => {
       try {
-        const { unitPrice, quantity, ticketTitle, ticketId, userEmail } = req.body;
+        const { userEmail } = req.query;
 
-        const price = Number(unitPrice);
-        const qty = Number(quantity);
+        const query = userEmail ? { userEmail } : {};
 
-        const booking = {
-          ticketId,
-          ticketTitle,
-          userEmail,
-          quantity: qty,
-          unitPrice: price,
-          totalPrice: price * qty,
-          status: "pending",
-          createdAt: new Date(),
-        };
+        const result = await bookingCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
 
-        const result = await bookingCollection.insertOne(booking);
-
-        res.send({
-          success: true,
-          insertedId: result.insertedId,
-          booking,
-        });
+        res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // GET BOOKINGS
-    app.get("/api/bookings", async (req, res) => {
-      const result = await bookingCollection.find().toArray();
-      // console.log("BOOKINGS FROM DB:", result);
-      res.send(result);
-    });
-
-    // UPDATE STATUS (ACCEPT / REJECT)
     app.patch("/api/bookings/:id", async (req, res) => {
       try {
-        const id = req.params.id;
+        const { id } = req.params;
         const { status } = req.body;
 
-        const booking = await bookingCollection.findOne({
-          _id: new ObjectId(id),
-        });
-
-        if (!booking) {
-          return res.status(404).send({ message: "Booking not found" });
-        }
-
-        // update booking status
-        await bookingCollection.updateOne(
+        const result = await bookingCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { status } }
+          {
+            $set: { status, updatedAt: new Date() },
+          }
         );
 
-        // ONLY reduce quantity when approved
-        if (status === "approved") {
-          await ticketCollection.updateOne(
-            { _id: new ObjectId(booking.ticketId) },
-            {
-              $inc: {
-                quantity: -Number(booking.quantity),
-              },
-            }
-          );
-        }
-
-        res.send({
-          success: true,
-          message: `Booking ${status}`,
-        });
+        res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
@@ -376,10 +378,6 @@ async function run() {
   }
 }
 run().catch(console.dir);
-
-
-
-
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`)
