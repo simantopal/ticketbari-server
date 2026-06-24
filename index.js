@@ -38,28 +38,23 @@ async function run() {
 
     app.post("/api/tickets", async (req, res) => {
       const ticket = req.body;
-
       const vendor = await userCollection.findOne({
         email: ticket.vendorEmail,
       });
-
       if (vendor?.isFraud) {
         return res.status(403).send({
           message: "Fraud vendors cannot add tickets",
         });
       }
-
       const result = await ticketCollection.insertOne({
         ...ticket,
         status: "pending",
         hidden: false,
         createdAt: new Date(),
       });
-
       res.send(result);
     });
 
-    // GET user
     app.get("/api/users", async (req, res) => {
       const users = await userCollection.find({}).toArray();
       res.send(users);
@@ -76,16 +71,13 @@ async function run() {
       }
     });
 
-    // UPDATE user
     app.put("/api/users/:id", async (req, res) => {
       try {
         const { name, image } = req.body;
-
         const result = await userCollection.updateOne(
           { _id: new ObjectId(req.params.id) },
           { $set: { name, image, updatedAt: new Date() } }
         );
-
         res.send(result);
       } catch (e) {
         res.status(500).send({ message: e.message });
@@ -96,33 +88,27 @@ async function run() {
       try {
         const { id } = req.params;
         const { role, isFraud } = req.body;
-
         const updateDoc = {};
 
         if (role) {
           updateDoc.role = role;
         }
-
         if (typeof isFraud === "boolean") {
           updateDoc.isFraud = isFraud;
         }
-
         const user = await userCollection.findOne({
           _id: new ObjectId(id),
         });
-
         if (!user) {
           return res.status(404).send({
             message: "User not found",
           });
         }
-
         const result = await userCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: updateDoc }
         );
 
-        // Mark Fraud
         if (isFraud === true) {
           await ticketCollection.updateMany(
             { vendorEmail: user.email },
@@ -134,8 +120,6 @@ async function run() {
             }
           );
         }
-
-        // Undo Fraud
         if (isFraud === false) {
           await ticketCollection.updateMany(
             { vendorEmail: user.email },
@@ -147,7 +131,6 @@ async function run() {
             }
           );
         }
-
         res.send(result);
       } catch (error) {
         res.status(500).send({
@@ -160,16 +143,12 @@ async function run() {
     app.get('/api/tickets', async (req, res) => {
       try {
         const query = {};
-
         if (req.query.vendorEmail) {
           query.vendorEmail = req.query.vendorEmail;
         }
-
         if (req.query.status) {
           query.status = req.query.status;
         }
-
-        // ✅ important safety filters
         query.hidden = { $ne: true };
 
         const result = await ticketCollection.find(query).toArray();
@@ -248,8 +227,6 @@ async function run() {
       }
     });
 
-
-
     app.get("/api/latest-tickets", async (req, res) => {
       try {
         const tickets = await ticketCollection
@@ -267,22 +244,17 @@ async function run() {
       }
     });
 
-
-    // Get Single Ticket
     app.get("/api/tickets/:id", async (req, res) => {
       const id = req.params.id;
-
       const result = await ticketCollection.findOne({
         _id: new ObjectId(id),
       });
-
       res.send(result);
     });
 
     app.put("/api/tickets/:id", async (req, res) => {
       try {
         const { id } = req.params;
-
         const result = await ticketCollection.updateOne(
           { _id: new ObjectId(id) },
           {
@@ -293,7 +265,6 @@ async function run() {
             },
           }
         );
-
         res.send(result);
       } catch (e) {
         res.status(500).send({ message: e.message });
@@ -314,17 +285,13 @@ async function run() {
       res.send(result);
     });
 
-    // Delete Ticket
     app.delete("/api/tickets/:id", async (req, res) => {
       const id = req.params.id;
-
       const result = await ticketCollection.deleteOne({
         _id: new ObjectId(id),
       });
-
       res.send(result);
     });
-
 
     app.post("/api/bookings", async (req, res) => {
       const booking = {
@@ -332,9 +299,7 @@ async function run() {
         status: "pending",
         createdAt: new Date(),
       };
-
       const result = await bookingCollection.insertOne(booking);
-
       res.send({
         ...booking,
         _id: result.insertedId,
@@ -344,14 +309,11 @@ async function run() {
     app.get("/api/bookings", async (req, res) => {
       try {
         const { userEmail } = req.query;
-
         const query = userEmail ? { userEmail } : {};
-
         const result = await bookingCollection
           .find(query)
           .sort({ createdAt: -1 })
           .toArray();
-
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
@@ -409,65 +371,42 @@ async function run() {
       }
     });
 
-    // =========================
-    // vendor REVENUE OVERVIEW
-    // =========================
     app.get("/api/vendor/revenue", async (req, res) => {
       try {
         const { vendorEmail } = req.query;
-
         if (!vendorEmail) {
-          return res.status(400).send({ message: "vendorEmail required" });
+          return res.status(400).send({
+            message: "vendorEmail required",
+          });
         }
-
-        // 1. Total tickets added by vendor
         const totalTicketsAdded = await ticketCollection.countDocuments({
           vendorEmail,
         });
-
-        // 2. Paid bookings for this vendor's tickets
-        const result = await bookingCollection.aggregate([
-          {
-            $match: { status: "paid" },
-          },
-          {
-            $lookup: {
-              from: "tickets",
-              localField: "ticketId",
-              foreignField: "_id",
-              as: "ticket",
+        const result = await bookingCollection
+          .aggregate([
+            {$match: {status: "paid",}},
+            {$addFields: {ticketObjectId: { $toObjectId: "$ticketId"}}},
+            {$lookup: {from: "tickets", localField: "ticketObjectId", foreignField: "_id", as: "ticket"}},
+            {$unwind: "$ticket"},
+            {$match: {"ticket.vendorEmail": vendorEmail}},
+            {$group: { _id: null, totalTicketsSold: {$sum: "$quantity"},
+                totalRevenue: { $sum: "$totalPrice" },
+              },
             },
-          },
-          {
-            $unwind: "$ticket",
-          },
-          {
-            $match: {
-              "ticket.vendorEmail": vendorEmail,
-            },
-          },
-          {
-            $group: {
-              _id: null,
-              totalTicketsSold: { $sum: "$quantity" },
-              totalRevenue: { $sum: "$amount" },
-            },
-          },
-        ]).toArray();
-
+          ])
+          .toArray();
         res.send({
           totalTicketsAdded,
           totalTicketsSold: result[0]?.totalTicketsSold || 0,
           totalRevenue: result[0]?.totalRevenue || 0,
         });
-
       } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error(error);
+        res.status(500).send({
+          message: error.message,
+        });
       }
     });
-
-
-
 
 
     // Send a ping to confirm a successful connection
