@@ -93,41 +93,67 @@ async function run() {
     });
 
     app.patch("/api/users/:id", async (req, res) => {
-      const { id } = req.params;
-      const { role, isFraud } = req.body;
+      try {
+        const { id } = req.params;
+        const { role, isFraud } = req.body;
 
-      const updateDoc = {};
+        const updateDoc = {};
 
-      if (role) {
-        updateDoc.role = role;
-      }
+        if (role) {
+          updateDoc.role = role;
+        }
 
-      if (typeof isFraud === "boolean") {
-        updateDoc.isFraud = isFraud;
-      }
+        if (typeof isFraud === "boolean") {
+          updateDoc.isFraud = isFraud;
+        }
 
-      const user = await userCollection.findOne({
-        _id: new ObjectId(id),
-      });
+        const user = await userCollection.findOne({
+          _id: new ObjectId(id),
+        });
 
-      const result = await userCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: updateDoc }
-      );
+        if (!user) {
+          return res.status(404).send({
+            message: "User not found",
+          });
+        }
 
-      if (isFraud === true) {
-        await ticketCollection.updateMany(
-          { vendorEmail: user.email },
-          {
-            $set: {
-              hidden: true,
-              isFraudVendor: true,
-            },
-          }
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateDoc }
         );
-      }
 
-      res.send(result);
+        // Mark Fraud
+        if (isFraud === true) {
+          await ticketCollection.updateMany(
+            { vendorEmail: user.email },
+            {
+              $set: {
+                hidden: true,
+                isFraudVendor: true,
+              },
+            }
+          );
+        }
+
+        // Undo Fraud
+        if (isFraud === false) {
+          await ticketCollection.updateMany(
+            { vendorEmail: user.email },
+            {
+              $set: {
+                hidden: false,
+                isFraudVendor: false,
+              },
+            }
+          );
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({
+          message: error.message,
+        });
+      }
     });
 
 
@@ -253,19 +279,6 @@ async function run() {
       res.send(result);
     });
 
-    // Add Ticket
-    app.post("/api/tickets", async (req, res) => {
-      const ticket = req.body;
-
-      const result = await ticketCollection.insertOne({
-        ...ticket,
-        status: "pending",
-        createdAt: new Date(),
-      });
-
-      res.send(result);
-    });
-
     app.put("/api/tickets/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -348,22 +361,110 @@ async function run() {
     app.patch("/api/bookings/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        const { status } = req.body;
+        const { status, transactionId } = req.body;
 
-        const result = await bookingCollection.updateOne(
+        const booking = await bookingCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!booking) {
+          return res.status(404).send({
+            message: "Booking not found",
+          });
+        }
+
+        await bookingCollection.updateOne(
           { _id: new ObjectId(id) },
           {
-            $set: { status, updatedAt: new Date() },
+            $set: {
+              status,
+              transactionId,
+              paymentDate:
+                status === "paid" ? new Date() : null,
+              updatedAt: new Date(),
+            },
           }
         );
 
-        res.send(result);
+        if (
+          status === "paid" && booking.status !== "paid") {
+          await ticketCollection.updateOne(
+            {
+              _id: new ObjectId(booking.ticketId),
+              quantity: { $gte: booking.quantity }
+            },
+            {
+              $inc: {
+                quantity: -booking.quantity,
+              },
+            }
+          );
+        }
+
+        res.send({ success: true });
+      } catch (error) {
+        res.status(500).send({
+          message: error.message,
+        });
+      }
+    });
+
+    // =========================
+    // vendor REVENUE OVERVIEW
+    // =========================
+    app.get("/api/vendor/revenue", async (req, res) => {
+      try {
+        const { vendorEmail } = req.query;
+
+        if (!vendorEmail) {
+          return res.status(400).send({ message: "vendorEmail required" });
+        }
+
+        // 1. Total tickets added by vendor
+        const totalTicketsAdded = await ticketCollection.countDocuments({
+          vendorEmail,
+        });
+
+        // 2. Paid bookings for this vendor's tickets
+        const result = await bookingCollection.aggregate([
+          {
+            $match: { status: "paid" },
+          },
+          {
+            $lookup: {
+              from: "tickets",
+              localField: "ticketId",
+              foreignField: "_id",
+              as: "ticket",
+            },
+          },
+          {
+            $unwind: "$ticket",
+          },
+          {
+            $match: {
+              "ticket.vendorEmail": vendorEmail,
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalTicketsSold: { $sum: "$quantity" },
+              totalRevenue: { $sum: "$amount" },
+            },
+          },
+        ]).toArray();
+
+        res.send({
+          totalTicketsAdded,
+          totalTicketsSold: result[0]?.totalTicketsSold || 0,
+          totalRevenue: result[0]?.totalRevenue || 0,
+        });
+
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
-
-
 
 
 
