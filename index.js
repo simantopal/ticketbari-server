@@ -190,14 +190,12 @@ async function run() {
           return res.status(404).send({ message: "Ticket not found" });
         }
 
-        // ❌ only approved ticket advertise করা যাবে
         if (ticket.status !== "approved") {
           return res.status(400).send({
             message: "Only approved tickets can be advertised",
           });
         }
 
-        // ❌ max 6 active ads
         if (isAdvertised) {
           const count = await ticketCollection.countDocuments({
             status: "approved",
@@ -372,86 +370,80 @@ async function run() {
     });
 
     app.get("/api/vendor/revenue", async (req, res) => {
-  try {
-    const { vendorEmail } = req.query;
+      try {
+        const { vendorEmail } = req.query;
 
-    if (!vendorEmail) {
-      return res.status(400).send({
-        message: "vendorEmail required",
-      });
-    }
+        if (!vendorEmail) {
+          return res.status(400).send({
+            message: "vendorEmail required",
+          });
+        }
 
-    const totalTicketsAdded = await ticketCollection.countDocuments({
-      vendorEmail,
-    });
+        const totalTicketsAdded = await ticketCollection.countDocuments({
+          vendorEmail,
+        });
 
-    const result = await bookingCollection
-      .aggregate([
-        // ✅ normalize status
-        {
-          $match: {
-            status: { $regex: /^paid$/i }, // case-insensitive
-          },
-        },
-
-        // safe objectId conversion
-        {
-          $addFields: {
-            ticketObjectId: {
-              $toObjectId: "$ticketId",
-            },
-          },
-        },
-
-        {
-          $lookup: {
-            from: "tickets",
-            localField: "ticketObjectId",
-            foreignField: "_id",
-            as: "ticket",
-          },
-        },
-
-        {
-          $unwind: "$ticket",
-        },
-
-        // vendor filter
-        {
-          $match: {
-            "ticket.vendorEmail": vendorEmail,
-          },
-        },
-
-        // safer revenue calculation
-        {
-          $group: {
-            _id: null,
-            totalTicketsSold: {
-              $sum: "$quantity",
-            },
-            totalRevenue: {
-              $sum: {
-                $multiply: ["$quantity", "$unitPrice"], // 🔥 BEST FIX
+        const result = await bookingCollection
+          .aggregate([
+            {
+              $match: {
+                status: { $regex: /^paid$/i },
               },
             },
-          },
-        },
-      ])
-      .toArray();
 
-    res.send({
-      totalTicketsAdded,
-      totalTicketsSold: result[0]?.totalTicketsSold || 0,
-      totalRevenue: result[0]?.totalRevenue || 0,
+            {
+              $addFields: {
+                ticketObjectId: {
+                  $toObjectId: "$ticketId",
+                },
+              },
+            },
+
+            {
+              $lookup: {
+                from: "tickets",
+                localField: "ticketObjectId",
+                foreignField: "_id",
+                as: "ticket",
+              },
+            },
+
+            {
+              $unwind: "$ticket",
+            },
+            {
+              $match: {
+                "ticket.vendorEmail": vendorEmail,
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalTicketsSold: {
+                  $sum: "$quantity",
+                },
+                totalRevenue: {
+                  $sum: {
+                    $multiply: ["$quantity", "$unitPrice"], // 🔥 BEST FIX
+                  },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        res.send({
+          totalTicketsAdded,
+          totalTicketsSold: result[0]?.totalTicketsSold || 0,
+          totalRevenue: result[0]?.totalRevenue || 0,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          message: error.message,
+        });
+      }
     });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({
-      message: error.message,
-    });
-  }
-});
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
