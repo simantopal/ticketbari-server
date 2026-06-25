@@ -13,6 +13,16 @@ app.get('/', (req, res) => {
   res.send('Hello World!')
 })
 
+const logger = (req, res, next) =>{
+  console.log('logggger middleware', req.params);
+  next();
+}
+
+const verifyToken = (req, res, next) => {
+  console.log("HEADERS:", req.headers);
+  next();
+};
+
 
 const uri = process.env.MONGO_DB_URI;
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -36,7 +46,7 @@ async function run() {
 
 
 
-    app.post("/api/tickets", async (req, res) => {
+    app.post("/api/tickets", logger, verifyToken, async (req, res) => {
       const ticket = req.body;
       const vendor = await userCollection.findOne({
         email: ticket.vendorEmail,
@@ -55,7 +65,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/users", async (req, res) => {
+    app.get("/api/users", verifyToken, async (req, res) => {
       const users = await userCollection.find({}).toArray();
       res.send(users);
     });
@@ -84,7 +94,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/users/:id", async (req, res) => {
+    app.patch("/api/users/:id", logger, verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { role, isFraud } = req.body;
@@ -140,7 +150,7 @@ async function run() {
     });
 
 
-    app.get('/api/tickets', async (req, res) => {
+    app.get('/api/tickets', verifyToken, async (req, res) => {
       try {
         const query = {};
         if (req.query.vendorEmail) {
