@@ -13,16 +13,6 @@ app.get('/', (req, res) => {
   res.send('Hello World!')
 })
 
-const logger = (req, res, next) =>{
-  console.log('logggger middleware', req.params);
-  next();
-}
-
-const verifyToken = (req, res, next) => {
-  console.log("HEADERS:", req.headers);
-  next();
-};
-
 
 const uri = process.env.MONGO_DB_URI;
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -46,7 +36,7 @@ async function run() {
 
 
 
-    app.post("/api/tickets", logger, verifyToken, async (req, res) => {
+    app.post("/api/tickets", async (req, res) => {
       const ticket = req.body;
       const vendor = await userCollection.findOne({
         email: ticket.vendorEmail,
@@ -65,7 +55,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/users", verifyToken, async (req, res) => {
+    app.get("/api/users", async (req, res) => {
       const users = await userCollection.find({}).toArray();
       res.send(users);
     });
@@ -94,7 +84,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/users/:id", logger, verifyToken, async (req, res) => {
+    app.patch("/api/users/:id", async (req, res) => {
       try {
         const { id } = req.params;
         const { role, isFraud } = req.body;
@@ -150,7 +140,7 @@ async function run() {
     });
 
 
-    app.get('/api/tickets', verifyToken, async (req, res) => {
+    app.get('/api/tickets', async (req, res) => {
       try {
         const query = {};
         if (req.query.vendorEmail) {
@@ -382,42 +372,86 @@ async function run() {
     });
 
     app.get("/api/vendor/revenue", async (req, res) => {
-      try {
-        const { vendorEmail } = req.query;
-        if (!vendorEmail) {
-          return res.status(400).send({
-            message: "vendorEmail required",
-          });
-        }
-        const totalTicketsAdded = await ticketCollection.countDocuments({
-          vendorEmail,
-        });
-        const result = await bookingCollection
-          .aggregate([
-            {$match: {status: "paid",}},
-            {$addFields: {ticketObjectId: { $toObjectId: "$ticketId"}}},
-            {$lookup: {from: "tickets", localField: "ticketObjectId", foreignField: "_id", as: "ticket"}},
-            {$unwind: "$ticket"},
-            {$match: {"ticket.vendorEmail": vendorEmail}},
-            {$group: { _id: null, totalTicketsSold: {$sum: "$quantity"},
-                totalRevenue: { $sum: "$totalPrice" },
-              },
-            },
-          ])
-          .toArray();
-        res.send({
-          totalTicketsAdded,
-          totalTicketsSold: result[0]?.totalTicketsSold || 0,
-          totalRevenue: result[0]?.totalRevenue || 0,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          message: error.message,
-        });
-      }
+  try {
+    const { vendorEmail } = req.query;
+
+    if (!vendorEmail) {
+      return res.status(400).send({
+        message: "vendorEmail required",
+      });
+    }
+
+    const totalTicketsAdded = await ticketCollection.countDocuments({
+      vendorEmail,
     });
 
+    const result = await bookingCollection
+      .aggregate([
+        // ✅ normalize status
+        {
+          $match: {
+            status: { $regex: /^paid$/i }, // case-insensitive
+          },
+        },
+
+        // safe objectId conversion
+        {
+          $addFields: {
+            ticketObjectId: {
+              $toObjectId: "$ticketId",
+            },
+          },
+        },
+
+        {
+          $lookup: {
+            from: "tickets",
+            localField: "ticketObjectId",
+            foreignField: "_id",
+            as: "ticket",
+          },
+        },
+
+        {
+          $unwind: "$ticket",
+        },
+
+        // vendor filter
+        {
+          $match: {
+            "ticket.vendorEmail": vendorEmail,
+          },
+        },
+
+        // safer revenue calculation
+        {
+          $group: {
+            _id: null,
+            totalTicketsSold: {
+              $sum: "$quantity",
+            },
+            totalRevenue: {
+              $sum: {
+                $multiply: ["$quantity", "$unitPrice"], // 🔥 BEST FIX
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    res.send({
+      totalTicketsAdded,
+      totalTicketsSold: result[0]?.totalTicketsSold || 0,
+      totalRevenue: result[0]?.totalRevenue || 0,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
